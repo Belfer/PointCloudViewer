@@ -18,6 +18,7 @@
 
 #define TINYOBJLOADER_IMPLEMENTATION
 #include "tiny_obj_loader.h"
+#include "tinyfiledialogs.h"
 
 #define WIN_TITLE "PCLViewer"
 #define WIN_WIDTH 640
@@ -129,13 +130,116 @@ static bool createShader(GLuint &prog, const char *vertSrc, const char *fragSrc)
     return true;
 }
 
+void loadScene(const std::string filename, GLuint &bounds, std::vector<std::pair<GLuint, size_t>> &meshes) {
+	std::vector<tinyobj::shape_t> shapes;
+	std::vector<tinyobj::material_t> materials;
+
+	std::string err;
+	bool ret = tinyobj::LoadObj(shapes, materials, err, filename.c_str());
+
+	if (!err.empty())
+		std::cerr << err << std::endl;
+
+	if (!ret)
+		exit(1);
+
+	glm::vec3 min(0), max(0), tmp(0);
+	for (size_t i = 0; i < shapes.size(); i++) {
+		size_t posCount = shapes[i].mesh.positions.size();
+		size_t norCount = shapes[i].mesh.normals.size();
+		GLuint mesh = 0;
+		GLuint posVBO = 0;
+		GLuint norVBO = 0;
+
+		for (size_t j = 0; j < shapes[i].mesh.positions.size();) {
+			tmp.x = shapes[i].mesh.positions[j++];
+			tmp.y = shapes[i].mesh.positions[j++];
+			tmp.z = shapes[i].mesh.positions[j++];
+			min.x = tmp.x < min.x ? tmp.x : min.x;
+			min.y = tmp.y < min.y ? tmp.y : min.y;
+			min.z = tmp.z < min.z ? tmp.z : min.z;
+			max.x = tmp.x > max.x ? tmp.x : max.x;
+			max.y = tmp.y > max.y ? tmp.y : max.y;
+			max.z = tmp.z > max.z ? tmp.z : max.z;
+		}
+
+		glGenVertexArrays(1, &mesh);
+		glBindVertexArray(mesh);
+
+		glGenBuffers(1, &posVBO);
+		glBindBuffer(GL_ARRAY_BUFFER, posVBO);
+		glBufferData(GL_ARRAY_BUFFER, posCount * sizeof(float), &shapes[i].mesh.positions[0], GL_STATIC_DRAW);
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *)0);
+		glEnableVertexAttribArray(0);
+		glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+		glGenBuffers(1, &norVBO);
+		glBindBuffer(GL_ARRAY_BUFFER, norVBO);
+		glBufferData(GL_ARRAY_BUFFER, norCount * sizeof(float), &shapes[i].mesh.normals[0], GL_STATIC_DRAW);
+		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *)0);
+		glEnableVertexAttribArray(1);
+		glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+		glBindVertexArray(0);
+		glDeleteBuffers(1, &posVBO);
+		meshes.emplace_back(std::make_pair(mesh, posCount));
+	}
+
+	shapes.clear();
+	materials.clear();
+
+	float boundsData[] = {
+		min.x, min.y, min.z,
+		max.x, min.y, min.z,
+		min.x, max.y, min.z,
+		max.x, max.y, min.z,
+		min.x, min.y, max.z,
+		max.x, min.y, max.z,
+		min.x, max.y, max.z,
+		max.x, max.y, max.z
+	};
+
+	unsigned int boundsIndices[] = {
+		0, 1, 3, 1, 2, 0, 2, 3,
+		4, 5, 7, 5, 6, 4, 6, 7,
+		0, 4, 1, 5, 2, 6, 3, 7
+	};
+
+	glGenVertexArrays(1, &bounds);
+	glBindVertexArray(bounds);
+
+	GLuint boundsVBO;
+	glGenBuffers(1, &boundsVBO);
+	glBindBuffer(GL_ARRAY_BUFFER, boundsVBO);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(boundsData), boundsData, GL_STATIC_DRAW);
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *)0);
+	glEnableVertexAttribArray(0);
+
+	GLuint boundsEBO;
+	glGenBuffers(1, &boundsEBO);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, boundsEBO);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(boundsIndices), boundsIndices, GL_STATIC_DRAW);
+
+	glBindVertexArray(0);
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+}
+
+void openSceneFile(GLuint &bounds, std::vector<std::pair<GLuint, size_t>> &meshes) {
+    const char *filename = tinyfd_openFileDialog("Open", "", 0, NULL, "scene files", 0);
+	if (filename != NULL) {
+		if (!meshes.empty()) {
+			for (auto m : meshes) {
+				glDeleteVertexArrays(1, &m.first);
+			}
+		}
+		
+		loadScene(filename, bounds, meshes);
+	}
+}
+
 int main(int argc, char ** args)
 {
-    if (argc < 2) {
-        std::cerr << "Please provide path to obj!\n";
-        exit(EXIT_FAILURE);
-    }
-
     GLFWwindow* window;
     glfwSetErrorCallback(error_callback);
     if (!glfwInit())
@@ -162,102 +266,8 @@ int main(int argc, char ** args)
     glEnable(GL_MULTISAMPLE);
     glDisable(GL_CULL_FACE);
 
-    std::string inputfile = args[1];
-    std::vector<tinyobj::shape_t> shapes;
-    std::vector<tinyobj::material_t> materials;
-
-    std::string err;
-    bool ret = tinyobj::LoadObj(shapes, materials, err, inputfile.c_str());
-
-    if (!err.empty())
-        std::cerr << err << std::endl;
-
-    if (!ret)
-        exit(1);
-
-    std::vector<std::pair<GLuint, size_t>> meshes;
-
-    glm::vec3 min(0), max(0), tmp(0);
-    for (size_t i = 0; i < shapes.size(); i++) {
-        size_t posCount = shapes[i].mesh.positions.size();
-        size_t norCount = shapes[i].mesh.normals.size();
-        GLuint mesh = 0;
-        GLuint posVBO = 0;
-        GLuint norVBO = 0;
-
-        for (size_t j = 0; j < shapes[i].mesh.positions.size();) {
-            tmp.x = shapes[i].mesh.positions[j++];
-            tmp.y = shapes[i].mesh.positions[j++];
-            tmp.z = shapes[i].mesh.positions[j++];
-            min.x = tmp.x < min.x ? tmp.x : min.x;
-            min.y = tmp.y < min.y ? tmp.y : min.y;
-            min.z = tmp.z < min.z ? tmp.z : min.z;
-            max.x = tmp.x > max.x ? tmp.x : max.x;
-            max.y = tmp.y > max.y ? tmp.y : max.y;
-            max.z = tmp.z > max.z ? tmp.z : max.z;
-        }
-
-        glGenVertexArrays(1, &mesh);
-        glBindVertexArray(mesh);
-
-        glGenBuffers(1, &posVBO);
-        glBindBuffer(GL_ARRAY_BUFFER, posVBO);
-        glBufferData(GL_ARRAY_BUFFER, posCount * sizeof(float), &shapes[i].mesh.positions[0], GL_STATIC_DRAW);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *)0);
-        glEnableVertexAttribArray(0);
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-        glGenBuffers(1, &norVBO);
-        glBindBuffer(GL_ARRAY_BUFFER, norVBO);
-        glBufferData(GL_ARRAY_BUFFER, norCount * sizeof(float), &shapes[i].mesh.normals[0], GL_STATIC_DRAW);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *)0);
-        glEnableVertexAttribArray(1);
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-        glBindVertexArray(0);
-        glDeleteBuffers(1, &posVBO);
-        meshes.emplace_back(std::make_pair(mesh, posCount));
-    }
-
-    shapes.clear();
-    materials.clear();
-
-    float boundsData[] = {
-        min.x, min.y, min.z,
-        max.x, min.y, min.z,
-        min.x, max.y, min.z,
-        max.x, max.y, min.z,
-        min.x, min.y, max.z,
-        max.x, min.y, max.z,
-        min.x, max.y, max.z,
-        max.x, max.y, max.z
-    };
-
-    GLuint boundsIndices[] = {
-        1, 2, 3
-    };
-
-    GLuint bounds;
-    glGenVertexArrays(1, &bounds);
-    glBindVertexArray(bounds);
-
-    GLuint boundsVBO;
-    glGenBuffers(1, &boundsVBO);
-    glBindBuffer(GL_ARRAY_BUFFER, boundsVBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(boundsData), boundsData, GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *)0);
-    glEnableVertexAttribArray(0);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-    GLuint boundsEBO;
-    glGenBuffers(1, &boundsEBO);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, boundsEBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(boundsIndices), boundsIndices, GL_STATIC_DRAW);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-
-    glBindVertexArray(0);
-    glDeleteBuffers(1, &boundsVBO);
-    glDeleteBuffers(1, &boundsEBO);
+	GLuint bounds = 0;
+	std::vector<std::pair<GLuint, size_t>> meshes;
 
     GLuint pointcloundShader;
     createShader(pointcloundShader, pointcloud_vert, pointcloud_frag);
@@ -301,6 +311,10 @@ int main(int argc, char ** args)
     std::chrono::duration<double, std::nano> elapsed;
     float delta = 0;
 
+	float scaleExp = 0.9f;
+	bool scalePoints = true;
+	bool drawBounds = true;
+
     while (!glfwWindowShouldClose(window))
     {
         end = std::chrono::high_resolution_clock::now();
@@ -312,6 +326,24 @@ int main(int argc, char ** args)
             std::this_thread::sleep_for(frameTime - elapsed);
 
         // Input
+		ImGui_ImplGlfwGL3_NewFrame();
+
+		ImGui::BeginMainMenuBar();
+		if (ImGui::BeginMenu("File")) {
+			if (ImGui::MenuItem("Load Scene", "", false, true))
+				openSceneFile(bounds, meshes);
+			ImGui::EndMenu();
+        }
+		ImGui::EndMainMenuBar();
+
+		ImGui::Begin("- Rendering -");
+		ImGui::Checkbox("Bounds", &drawBounds);
+		ImGui::Checkbox("Scaled", &scalePoints);
+		if (scalePoints) {
+			ImGui::InputFloat("Exponent", &scaleExp, 0.01f, 0.1f, 2);
+		}
+		ImGui::End();
+
         mouseDelta = mousePos;
         glfwGetCursorPos(window, &mousePos.x, &mousePos.y);
         mouseDelta = mousePos - mouseDelta;
@@ -328,7 +360,7 @@ int main(int argc, char ** args)
             move.x = -1;
 
         // Update
-        if (glfwGetMouseButton(window, 0)) {
+        if (glfwGetMouseButton(window, 1)) {
             angles.x -= mouseDelta.y * delta;
             angles.y += mouseDelta.x * delta;
             camRot = glm::angleAxis(angles.x, right) * glm::angleAxis(angles.y, up);
@@ -358,8 +390,13 @@ int main(int argc, char ** args)
         glUniform4fv(glGetUniformLocation(pointcloundShader, "LightCol"), 1, glm::value_ptr(lightCol));
         glUniform4fv(glGetUniformLocation(pointcloundShader, "AmbientCol"), 1, glm::value_ptr(ambientCol));
 
-        const float size = (1.f / pow(glm::length(camPos), 0.8f)) * 20;
-        glPointSize(size);
+		if (scalePoints) {
+			const float size = (1.f / pow(glm::length(camPos), scaleExp)) * 20;
+			glPointSize(size);
+		} else {
+			glPointSize(1.f);
+		}
+
         for (auto mesh : meshes) {
             glBindVertexArray(mesh.first);
             glDrawArrays(GL_POINTS, 0, mesh.second);
@@ -369,33 +406,12 @@ int main(int argc, char ** args)
         glUniformMatrix4fv(glGetUniformLocation(shapeShader, "MVP"), 1, GL_TRUE, glm::value_ptr(mvpT));
         glUniform4fv(glGetUniformLocation(shapeShader, "Color"), 1, glm::value_ptr(boundsColor));
 
-        glBindVertexArray(bounds);
-        glDrawArrays(GL_LINES, 0, sizeof(boundsData) / sizeof(float));
-        //glDrawElements(GL_LINES, 3, GL_UNSIGNED_INT, 0);
+		if (bounds && drawBounds) {
+			glBindVertexArray(bounds);
+			glDrawElements(GL_LINES, 24, GL_UNSIGNED_INT, 0);
+		}
 
-        /*ImGui_ImplGlfwGL3_NewFrame();
-        ImGui::BeginMainMenuBar();
-
-        if (ImGui::BeginMenu("File")) {
-            ImGui::MenuItem("New Scene", "", false, true);
-            ImGui::MenuItem("Load Scene", "", false, true);
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Edit")) {
-            ImGui::MenuItem("Undo", "", false, true);
-            ImGui::MenuItem("Redo", "", false, true);
-            ImGui::MenuItem("Cut", "", false, true);
-            ImGui::MenuItem("Copy", "", false, true);
-            ImGui::MenuItem("Paste", "", false, true);
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("View")) {
-            ImGui::EndMenu();
-        }
-
-        ImGui::EndMainMenuBar();
-        ImGui::End();
-        ImGui::Render();*/
+        ImGui::Render();
 
         glfwSwapBuffers(window);
         glfwPollEvents();

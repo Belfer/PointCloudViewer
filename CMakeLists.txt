@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 2.8)
 
-project(PCLViewer)
+project(PointCloudViewer)
 set(${PROJECT_NAME}_MAJOR_VERSION 0)
 set(${PROJECT_NAME}_MINOR_VERSION 1)
 set(${PROJECT_NAME}_REVISION_VERSION 1)
