@@ -1,3 +1,8 @@
+/////////////////////////////////
+// A simple point cloud viewer //
+// By: Conor Damery            //
+/////////////////////////////////
+
 #include <iostream>
 #include <stdlib.h>
 #include <stdio.h>
@@ -20,12 +25,17 @@
 #include "tiny_obj_loader.h"
 #include "tinyfiledialogs.h"
 
-#define WIN_TITLE "PCLViewer"
+#define WIN_TITLE "Point Cloud Viewer"
 #define WIN_WIDTH 640
 #define WIN_HEIGHT 480
 #define GL_MAJOR 3
 #define GL_MINOR 3
 
+/////////////
+// Shaders //
+/////////////
+
+// For wireframe shapes (bounds)
 static const char *shape_vert =
 "#version 330 core\n\
     layout(location = 0) in vec3 POSITION;\n\
@@ -42,6 +52,7 @@ static const char *shape_frag =
         frag = Color;\n\
     }\n";
 
+// For point cloud meshes
 static const char *pointcloud_vert =
     "#version 330 core\n\
     layout(location = 0) in vec3 POSITION;\n\
@@ -65,6 +76,10 @@ static const char *pointcloud_frag =
         frag = AmbientCol + d * LightCol;\n\
     }\n";
 
+////////////////////////////
+// GLFW callback bindings //
+////////////////////////////
+
 static void error_callback(int error, const char* description)
 {
     fprintf(stderr, "Error: %s\n", description);
@@ -76,11 +91,19 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action, 
         glfwSetWindowShouldClose(window, GLFW_TRUE);
 }
 
+///////////////////////
+// Utility functions //
+///////////////////////
+
+/**
+* Creates a shader program given a vertex and fragment shaders.
+*/
 static bool createShader(GLuint &prog, const char *vertSrc, const char *fragSrc)
 {
     GLint success = 0;
     GLchar errBuff[1024] = { 0 };
 
+	// Create vertex shader
     GLuint vert = glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(vert, 1, &vertSrc, NULL);
     glCompileShader(vert);
@@ -92,6 +115,7 @@ static bool createShader(GLuint &prog, const char *vertSrc, const char *fragSrc)
         return false;
     }
 
+	// Create fragment shader
     GLuint frag = glCreateShader(GL_FRAGMENT_SHADER);
     glShaderSource(frag, 1, &fragSrc, NULL);
     glCompileShader(frag);
@@ -103,6 +127,7 @@ static bool createShader(GLuint &prog, const char *vertSrc, const char *fragSrc)
         return false;
     }
 
+	// Create shader program
     prog = glCreateProgram();
     glAttachShader(prog, vert);
     glAttachShader(prog, frag);
@@ -125,24 +150,27 @@ static bool createShader(GLuint &prog, const char *vertSrc, const char *fragSrc)
         return false;
     }
 
+	// No need for these so we can delete them
     glDeleteShader(vert);
     glDeleteShader(frag);
     return true;
 }
 
+/**
+* Loads and generates the meshes for rendering.
+*/
 void loadScene(const std::string filename, GLuint &bounds, std::vector<std::pair<GLuint, size_t>> &meshes) {
 	std::vector<tinyobj::shape_t> shapes;
 	std::vector<tinyobj::material_t> materials;
 
+	// Load file and check for errors
 	std::string err;
 	bool ret = tinyobj::LoadObj(shapes, materials, err, filename.c_str());
 
-	if (!err.empty())
-		std::cerr << err << std::endl;
+	if (!err.empty()) std::cerr << err << std::endl;
+	if (!ret) exit(1);
 
-	if (!ret)
-		exit(1);
-
+	// Calculate min max points and generate vertex arrays
 	glm::vec3 min(0), max(0), tmp(0);
 	for (size_t i = 0; i < shapes.size(); i++) {
 		size_t posCount = shapes[i].mesh.positions.size();
@@ -166,6 +194,7 @@ void loadScene(const std::string filename, GLuint &bounds, std::vector<std::pair
 		glGenVertexArrays(1, &mesh);
 		glBindVertexArray(mesh);
 
+		// Positions buffer
 		glGenBuffers(1, &posVBO);
 		glBindBuffer(GL_ARRAY_BUFFER, posVBO);
 		glBufferData(GL_ARRAY_BUFFER, posCount * sizeof(float), &shapes[i].mesh.positions[0], GL_STATIC_DRAW);
@@ -173,6 +202,7 @@ void loadScene(const std::string filename, GLuint &bounds, std::vector<std::pair
 		glEnableVertexAttribArray(0);
 		glBindBuffer(GL_ARRAY_BUFFER, 0);
 
+		// Normals buffer
 		glGenBuffers(1, &norVBO);
 		glBindBuffer(GL_ARRAY_BUFFER, norVBO);
 		glBufferData(GL_ARRAY_BUFFER, norCount * sizeof(float), &shapes[i].mesh.normals[0], GL_STATIC_DRAW);
@@ -181,13 +211,20 @@ void loadScene(const std::string filename, GLuint &bounds, std::vector<std::pair
 		glBindBuffer(GL_ARRAY_BUFFER, 0);
 
 		glBindVertexArray(0);
+
+		// This is valid since we have unbinded the VA
 		glDeleteBuffers(1, &posVBO);
+		glDeleteBuffers(1, &norVBO);
+
+		// Push to list for later drawing
 		meshes.emplace_back(std::make_pair(mesh, posCount));
 	}
 
+	// Not needed anymore
 	shapes.clear();
 	materials.clear();
 
+	// Generate bounds mesh
 	float boundsData[] = {
 		min.x, min.y, min.z,
 		max.x, min.y, min.z,
@@ -225,28 +262,41 @@ void loadScene(const std::string filename, GLuint &bounds, std::vector<std::pair
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 }
 
-void openSceneFile(GLuint &bounds, std::vector<std::pair<GLuint, size_t>> &meshes) {
+/**
+* Handles the "load scene" event.
+*/
+void loadSceneFile(GLuint &bounds, std::vector<std::pair<GLuint, size_t>> &meshes) {
     const char *filename = tinyfd_openFileDialog("Open", "", 0, NULL, "scene files", 0);
 	if (filename != NULL) {
-		if (!meshes.empty()) {
-			for (auto m : meshes) {
-				glDeleteVertexArrays(1, &m.first);
-			}
+		// Deletes buffers if any was created
+		if (bounds != 0) {
+			glDeleteVertexArrays(1, &bounds);
 		}
+		for (auto m : meshes) {
+			glDeleteVertexArrays(1, &m.first);
+		}
+		bounds = 0;
+		meshes.clear();
 		
+		// Loads the scene meshes
 		loadScene(filename, bounds, meshes);
 	}
 }
 
+/////////////////
+// Application //
+/////////////////
+
 int main(int argc, char ** args)
 {
+	// Create window
     GLFWwindow* window;
     glfwSetErrorCallback(error_callback);
     if (!glfwInit())
         exit(EXIT_FAILURE);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, GL_MAJOR);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, GL_MINOR);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE); // We are using the core profile for GLSL 330
     window = glfwCreateWindow(WIN_WIDTH, WIN_HEIGHT, WIN_TITLE, NULL, NULL);
     if (!window) {
         glfwTerminate();
@@ -260,12 +310,14 @@ int main(int argc, char ** args)
     // Setup ImGui binding
     ImGui_ImplGlfwGL3_Init(window, true);
 
+	// OpenGL config
     printf("%s\n", glGetString(GL_VERSION));
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_DEPTH_CLAMP);
     glEnable(GL_MULTISAMPLE);
     glDisable(GL_CULL_FACE);
 
+	// Rendering vars
 	GLuint bounds = 0;
 	std::vector<std::pair<GLuint, size_t>> meshes;
 
@@ -275,35 +327,40 @@ int main(int argc, char ** args)
     GLuint shapeShader;
     createShader(shapeShader, shape_vert, shape_frag);
 
+	// Window vars
     float ratio;
     int width, height;
     glfwGetFramebufferSize(window, &width, &height);
     ratio = width / (float) height;
 
+	// Defines our global axis
     const glm::vec3 right(1, 0, 0);
     const glm::vec3 up(0, 1, 0);
     const glm::vec3 forward(0, 0, 1);
 
+	// Shader vars
     glm::vec3 lightDir(0, -1, 0);
     glm::vec4 lightCol(1, 1, 1, 1);
     glm::vec4 ambientCol(0.01, 0.01, 0.01, 1);
 
     glm::vec4 boundsColor(0, 1, 0, 0.5f);
 
+	// Camera control vars
     glm::vec3 camPos(0, 0, -1);
-    glm::quat camRot;
+    glm::quat camRot; // Used to transform forward dir
     glm::vec3 move(0);
-    glm::vec3 angles(0);
+    glm::vec3 angles(0); // Euler angles
 
     glm::mat4 projT = glm::perspective(70.f, ratio, 0.1f, 1000.f);
-    glm::mat4 viewT = glm::lookAt(camPos, camPos + forward * camRot, up);
-    glm::mat4 modelT = glm::scale(glm::vec3(1));
+    glm::mat4 viewT = glm::lookAt(camPos, camPos + forward * camRot, up); // Looks at the forward direction of rotated camera
+    glm::mat4 modelT = glm::scale(glm::vec3(2));
     glm::mat4 mvpT;
 
     glm::dvec2 mousePos;
     glm::dvec2 mouseDelta;
     glfwGetCursorPos(window, &mousePos.x, &mousePos.y);
 
+	// Game loop vars
     auto start = std::chrono::high_resolution_clock::now();
     auto end = start;
 
@@ -311,12 +368,14 @@ int main(int argc, char ** args)
     std::chrono::duration<double, std::nano> elapsed;
     float delta = 0;
 
+	// Config vars
 	float scaleExp = 0.9f;
 	bool scalePoints = true;
 	bool drawBounds = true;
 
     while (!glfwWindowShouldClose(window))
     {
+		// Calculate delta frame time
         end = std::chrono::high_resolution_clock::now();
         elapsed = end - start;
         delta = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() / 1000.f;
@@ -325,13 +384,13 @@ int main(int argc, char ** args)
         if (elapsed < frameTime)
             std::this_thread::sleep_for(frameTime - elapsed);
 
-        // Input
+        // GUI input
 		ImGui_ImplGlfwGL3_NewFrame();
 
 		ImGui::BeginMainMenuBar();
 		if (ImGui::BeginMenu("File")) {
 			if (ImGui::MenuItem("Load Scene", "", false, true))
-				openSceneFile(bounds, meshes);
+				loadSceneFile(bounds, meshes);
 			ImGui::EndMenu();
         }
 		ImGui::EndMainMenuBar();
@@ -344,6 +403,7 @@ int main(int argc, char ** args)
 		}
 		ImGui::End();
 
+		// Camera input
         mouseDelta = mousePos;
         glfwGetCursorPos(window, &mousePos.x, &mousePos.y);
         mouseDelta = mousePos - mouseDelta;
@@ -370,9 +430,9 @@ int main(int argc, char ** args)
             glm::normalize(move);
         camPos += 2.f * move * camRot * delta;
 
+		// Update MVP matrices
         projT = glm::perspective(70.f, ratio, 0.1f, 1000.f);
         viewT = glm::lookAt(camPos, camPos + forward * camRot, up);
-        modelT = glm::scale(glm::vec3(2));
         mvpT = projT * viewT * modelT;
 
         glfwGetFramebufferSize(window, &width, &height);
@@ -384,6 +444,7 @@ int main(int argc, char ** args)
         glClearColor(0.1f, 0.1f, 0.1f, 1);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+		// Update point cloud shader
         glUseProgram(pointcloundShader);
         glUniformMatrix4fv(glGetUniformLocation(pointcloundShader, "MVP"), 1, GL_TRUE, glm::value_ptr(mvpT));
         glUniform3fv(glGetUniformLocation(pointcloundShader, "LightDir"), 1, glm::value_ptr(lightDir));
@@ -402,6 +463,7 @@ int main(int argc, char ** args)
             glDrawArrays(GL_POINTS, 0, mesh.second);
         }
 
+		// Update shape shader
         glUseProgram(shapeShader);
         glUniformMatrix4fv(glGetUniformLocation(shapeShader, "MVP"), 1, GL_TRUE, glm::value_ptr(mvpT));
         glUniform4fv(glGetUniformLocation(shapeShader, "Color"), 1, glm::value_ptr(boundsColor));
@@ -413,10 +475,12 @@ int main(int argc, char ** args)
 
         ImGui::Render();
 
+		// Display
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
 
+	// Clean resources
     for (auto mesh : meshes)
         glDeleteVertexArrays(1, &mesh.first);
     glDeleteVertexArrays(1, &bounds);
