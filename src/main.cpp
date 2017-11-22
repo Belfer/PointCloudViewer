@@ -31,6 +31,7 @@
 #define GL_MAJOR 3
 #define GL_MINOR 3
 #define VSYNC 1 // Use if supported
+#define MSAA 4
 
 /////////////
 // Shaders //
@@ -73,7 +74,7 @@ static const char *pointcloud_frag =
     uniform vec4 LightCol;\n\
     uniform vec4 AmbientCol;\n\
     void main() {\n\
-        float d = dot(_Normal, -LightDir);\n\
+        float d = dot(_Normal, normalize(-LightDir));\n\
         frag = AmbientCol + d * LightCol;\n\
     }\n";
 
@@ -298,6 +299,7 @@ int main(int argc, char ** args)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, GL_MAJOR);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, GL_MINOR);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE); // We are using the core profile for GLSL 330
+	glfwWindowHint(GLFW_SAMPLES, MSAA);
     window = glfwCreateWindow(WIN_WIDTH, WIN_HEIGHT, WIN_TITLE, NULL, NULL);
     if (!window) {
         glfwTerminate();
@@ -381,7 +383,6 @@ int main(int argc, char ** args)
         elapsed = end - start;
         delta = (end - start).count() / 1000000000.f;
         start = end;
-		std::cout << delta << "\n";
 
         if (elapsed < frameTime)
             std::this_thread::sleep_for(frameTime - elapsed);
@@ -398,6 +399,13 @@ int main(int argc, char ** args)
 		ImGui::EndMainMenuBar();
 
 		ImGui::Begin("- Rendering -");
+		ImGui::InputFloat4("Ambient Col", const_cast<float *>(glm::value_ptr(ambientCol)), 2);
+		ImGui::InputFloat4("Light Col", const_cast<float *>(glm::value_ptr(lightCol)), 2);
+		ImGui::InputFloat3("Light Dir", const_cast<float *>(glm::value_ptr(lightDir)), 2);
+		if (ImGui::Button("Normalize")) {
+			if (glm::dot(lightDir, lightDir) > 1)
+				lightDir = glm::normalize(lightDir);
+		}
 		ImGui::Checkbox("Bounds", &drawBounds);
 		ImGui::Checkbox("Scaled", &scalePoints);
 		if (scalePoints) {
@@ -428,8 +436,8 @@ int main(int argc, char ** args)
             camRot = glm::angleAxis(angles.x, right) * glm::angleAxis(angles.y, up);
         }
 
-        if (glm::length(move) > 0)
-            glm::normalize(move);
+		if (glm::dot(move, move) > 1)
+			move = glm::normalize(move);
         camPos += 2.f * move * camRot * delta;
 
 		// Update MVP matrices
