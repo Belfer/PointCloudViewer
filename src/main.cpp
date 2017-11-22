@@ -30,6 +30,7 @@
 #define WIN_HEIGHT 480
 #define GL_MAJOR 3
 #define GL_MINOR 3
+#define VSYNC 1 // Use if supported
 
 /////////////
 // Shaders //
@@ -305,7 +306,7 @@ int main(int argc, char ** args)
     glfwSetKeyCallback(window, key_callback);
     glfwMakeContextCurrent(window);
     gladLoadGLLoader((GLADloadproc) glfwGetProcAddress);
-    glfwSwapInterval(1);
+    glfwSwapInterval(VSYNC);
 
     // Setup ImGui binding
     ImGui_ImplGlfwGL3_Init(window, true);
@@ -364,8 +365,8 @@ int main(int argc, char ** args)
     auto start = std::chrono::high_resolution_clock::now();
     auto end = start;
 
-    std::chrono::duration<double, std::nano> frameTime(1.f / 60);
-    std::chrono::duration<double, std::nano> elapsed;
+	std::chrono::duration<double, std::nano> frameTime(1000000000 / 60.0);
+	std::chrono::duration<double, std::nano> elapsed;
     float delta = 0;
 
 	// Config vars
@@ -378,8 +379,9 @@ int main(int argc, char ** args)
 		// Calculate delta frame time
         end = std::chrono::high_resolution_clock::now();
         elapsed = end - start;
-        delta = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() / 1000.f;
+        delta = (end - start).count() / 1000000000.f;
         start = end;
+		std::cout << delta << "\n";
 
         if (elapsed < frameTime)
             std::this_thread::sleep_for(frameTime - elapsed);
