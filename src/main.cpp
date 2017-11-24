@@ -30,7 +30,7 @@
 #define WIN_HEIGHT 480
 #define GL_MAJOR 3
 #define GL_MINOR 3
-#define VSYNC 1 // Use if supported
+#define VSYNC 0 // Use if supported
 #define MSAA 2
 
 /////////////
@@ -355,10 +355,10 @@ int main(int argc, char ** args)
 	// Shader vars
 	int drawMode = 3;
 	float lightIntensity = 1.0f;
-	glm::vec3 lightDir(0, -1, 0);
+	glm::vec3 lightDir(0, -1.0f, 0.1f);
 	glm::vec3 lightCol(1, 1, 1);
-	glm::vec3 diffuseCol(1, 1, 1);
-	glm::vec3 ambientCol(0.01, 0.01, 0.01);
+	glm::vec3 diffuseCol(1.0f, 0.2f, 0.1f);
+	glm::vec3 ambientCol(0.05, 0.20, 0.10);
 
 	glm::vec4 boundsColor(0, 1, 0, 0.5f);
 
@@ -381,7 +381,7 @@ int main(int argc, char ** args)
 	auto start = std::chrono::high_resolution_clock::now();
 	auto end = start;
 
-	std::chrono::duration<double, std::nano> frameTime(1000000000 / 60.0);
+	std::chrono::duration<double, std::nano> frameTime(1000000000.0 / 60.0);
 	std::chrono::duration<double, std::nano> elapsed;
 	std::chrono::duration<double, std::nano> carry;
 	float delta = 0;
@@ -396,18 +396,18 @@ int main(int argc, char ** args)
 
 	while (!glfwWindowShouldClose(window))
 	{
+		if (elapsed < frameTime) {
+			auto sleepTime = frameTime - elapsed;
+			auto startSleep = std::chrono::high_resolution_clock::now();
+			std::this_thread::sleep_for(sleepTime);
+			carry = sleepTime - (std::chrono::high_resolution_clock::now() - startSleep);
+		}
+
 		// Calculate delta frame time
 		end = std::chrono::high_resolution_clock::now();
 		elapsed = (end - start) + carry;
 		delta = (end - start).count() / 1000000000.f;
 		start = end;
-
-		if (elapsed < frameTime) {
-			auto startSleep = std::chrono::high_resolution_clock::now();
-			auto sleepTime = frameTime - elapsed;
-			std::this_thread::sleep_for(sleepTime);
-			carry = sleepTime - (std::chrono::high_resolution_clock::now() - startSleep);
-		}
 
 		// GUI input
 		ImGui_ImplGlfwGL3_NewFrame();
