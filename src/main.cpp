@@ -343,7 +343,7 @@ int main(int argc, char ** args)
 	float ratio;
 	int width, height;
 	glfwGetFramebufferSize(window, &width, &height);
-	ratio = width / (float)height;
+	ratio = height != 0 ? width / (float)height : 1;
 
 	// Defines our global axis
 	const glm::vec3 right(1, 0, 0);
@@ -396,12 +396,12 @@ int main(int argc, char ** args)
 
 	while (!glfwWindowShouldClose(window))
 	{
-		if (elapsed < frameTime) {
+		/*if (elapsed < frameTime) {
 			auto sleepTime = frameTime - elapsed;
 			auto startSleep = std::chrono::high_resolution_clock::now();
 			std::this_thread::sleep_for(sleepTime);
 			carry = sleepTime - (std::chrono::high_resolution_clock::now() - startSleep);
-		}
+		}*/
 
 		// Calculate delta frame time
 		end = std::chrono::high_resolution_clock::now();
